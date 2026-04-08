@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Cyber-Grid: Tactical Defense</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;900&display=swap');
+        body { margin: 0; background: #020617; display: flex; justify-content: center; align-items: center; height: 100vh; font-family: 'Orbitron', sans-serif; overflow: hidden; }
+        #canvas-holder { position: relative; border: 3px solid #0ea5e9; box-shadow: 0 0 50px rgba(14, 165, 233, 0.3); border-radius: 8px; }
+        .ui-panel { position: absolute; top: 15px; width: 100%; display: flex; justify-content: space-around; pointer-events: none; z-index: 10; color: #0ea5e9; text-shadow: 0 0 10px #0ea5e9; }
+        .stat { background: rgba(15, 23, 42, 0.8); padding: 10px 20px; border-radius: 4px; border: 1px solid #0ea5e9; }
+        .money { color: #f59e0b; border-color: #f59e0b; text-shadow: 0 0 10px #f59e0b; }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-holder">
+        <div class="ui-panel">
+            <div class="stat money">CREDITS: <span id="m-val">250</span></div>
+            <div class="stat">WAVE: <span id="w-val">1</span></div>
+            <div class="stat" style="color:#ef4444">CORE: <span id="l-val">10</span></div>
+        </div>
+    </div>
+
+    <script>
+        const GRID = 50;
+        let enemies = [], towers = [], projectiles = [], particles = [], floatTexts = [];
+        let waypoints = [], pathCells = [];
+        let credits = 250, lives = 10, wave = 1;
+
+        function setup() {
+            let cnv = createCanvas(800, 600);
+            cnv.parent('canvas-holder');
+            waypoints = [{x:-50,y:325},{x:225,y:325},{x:225,y:125},{x:575,y:125},{x:575,y:475},{x:850,y:475}];
+            mapPath();
+        }
+
+        function draw() {
+            background(5, 10, 20);
+            drawScifiGrid();
+            drawCyberPath();
+
+            if (frameCount % max(30, 100 - wave * 5) === 0) enemies.push(new Enemy(wave));
+            if (frameCount % 600 === 0) wave++; updateUI();
+
+            towers.forEach(t => { t.run(); t.show(); });
+            
+            // Gestionar listas (Limpieza y Actualización)
+            updateEntities(projectiles);
+            updateEntities(enemies);
+            updateEntities(particles);
+            updateEntities(floatTexts);
+
+            drawSelection();
+            if (lives <= 0) noLoop();
+        }
+
+        function updateEntities(list) {
+            for (let i = list.length - 1; i >= 0; i--) {
+                list[i].update();
+                list[i].display();
+                if (list[i].dead) list.splice(i, 1);
+            }
+        }
+
+        function drawScifiGrid() {
+            stroke(15, 30, 60);
+            strokeWeight(1);
+            for (let x = 0; x <= width; x += GRID) line(x, 0, x, height);
+            for (let y = 0; y <= height; y += GRID) line(0, y, width, y);
+        }
+
+        function drawCyberPath() {
+            stroke(10, 25, 50);
+            strokeWeight(GRID);
+            noFill();
+            beginShape();
+            waypoints.forEach(p => vertex(p.x, p.y));
+            endShape();
+            stroke(14, 165, 233, 40);
+            strokeWeight(2);
+            beginShape();
+            waypoints.forEach(p => vertex(p.x, p.y));
+            endShape();
+        }
+
+        function mapPath() {
+            for (let i = 0; i < waypoints.length - 1; i++) {
+                for (let x = 0; x < width; x += GRID) {
+                    for (let y = 0; y < height; y += GRID) {
+                        if (dToSeg(x+25, y+25, waypoints[i].x, waypoints[i].y, waypoints[i+1].x, waypoints[i+1].y) < 25) 
+                        pathCells.push(`${x},${y}`);
+                    }
+                }
+            }
+        }
+
+        class Enemy {
+            constructor(lvl) {
+                this.x = waypoints[0].x; this.y = waypoints[0].y;
+                this.hp = 50 + lvl * 20; this.maxHp = this.hp;
+                this.node = 1; this.dead = false; this.ang = 0;
+            }
+            update() {
+                let target = waypoints[this.node];
+                let angle = atan2(target.y - this.y, target.x - this.x);
+                this.x += cos(angle) * 2; this.y += sin(angle) * 2;
+                if (dist(this.x, this.y, target.x, target.y) < 3) this.node++;
+                if (this.x > width + 20) { lives--; this.dead = true; updateUI(); }
+                if (this.hp <= 0) { 
+                    this.dead = true; credits += 15; updateUI();
+                    for(let i=0; i<8; i++) particles.push(new Particle(this.x, this.y, '#f43f5e'));
+                }
+                this.ang += 0.1;
+            }
+            display() {
+                push();
+                translate(this.x, this.y);
+                rotate(this.ang);
+                fill(244, 63, 94); stroke(255, 100);
+                rectMode(CENTER); rect(0, 0, 15, 15);
+                pop();
+                fill(255, 50); rect(this.x-10, this.y-15, 20, 3);
+                fill(34, 197, 94); rect(this.x-10, this.y-15, (this.hp/this.maxHp)*20, 3);
+            }
+        }
+
+        class Tower {
+            constructor(gx, gy) {
+                this.x = gx + 25; this.y = gy + 25; this.gx = gx; this.gy = gy;
+                this.range = 160; this.cd = 0;
+            }
+            run() {
+                if (this.cd > 0) this.cd--;
+                else {
+                    let target = enemies.find(e => dist(this.x, this.y, e.x, e.y) < this.range);
+                    if (target) {
+                        projectiles.push(new Projectile(this.x, this.y, target));
+                        this.cd = 25;
+                    }
+                }
+            }
+            show() {
+                fill(15, 23, 42); stroke(14, 165, 233); strokeWeight(2);
+                rect(this.gx+10, this.gy+10, 30, 30, 4);
+                noStroke(); fill(14, 165, 233, 30);
+                ellipse(this.x, this.y, this.range*2);
+            }
+        }
+
+        class Projectile {
+            constructor(x, y, target) {
+                this.x = x; this.y = y; this.target = target;
+                this.dead = false; this.history = [];
+            }
+            update() {
+                this.history.push({x: this.x, y: this.y});
+                if (this.history.length > 5) this.history.shift();
+                let angle = atan2(this.target.y - this.y, this.target.x - this.x);
+                this.x += cos(angle) * 8; this.y += sin(angle) * 8;
+                if (dist(this.x, this.y, this.target.x, this.target.y) < 10) {
+                    this.target.hp -= 30;
+                    floatTexts.push(new FloatText(this.x, this.y, "-30"));
+                    this.dead = true;
+                }
+            }
+            display() {
+                stroke(251, 191, 36); strokeWeight(3);
+                this.history.forEach((p, i) => {
+                    stroke(251, 191, 36, i * 50);
+                    point(p.x, p.y);
+                });
+            }
+        }
+
+        class Particle {
+            constructor(x, y, c) {
+                this.x = x; this.y = y; this.c = color(c);
+                this.vx = random(-2, 2); this.vy = random(-2, 2);
+                this.alpha = 255; this.dead = false;
+            }
+            update() {
+                this.x += this.vx; this.y += this.vy;
+                this.alpha -= 10;
+                if (this.alpha <= 0) this.dead = true;
+            }
+            display() {
+                this.c.setAlpha(this.alpha);
+                fill(this.c); noStroke();
+                rect(this.x, this.y, 4, 4);
+            }
+        }
+
+        class FloatText {
+            constructor(x, y, txt) { this.x = x; this.y = y; this.txt = txt; this.life = 255; this.dead = false; }
+            update() { this.y -= 0.5; this.life -= 10; if(this.life <= 0) this.dead = true; }
+            display() { fill(255, this.life); textSize(12); text(this.txt, this.x, this.y); }
+        }
+
+        function mousePressed() {
+            let gx = floor(mouseX / GRID) * GRID, gy = floor(mouseY / GRID) * GRID;
+            if (credits >= 50 && !pathCells.includes(`${gx},${gy}`) && !towers.some(t=>t.gx==gx&&t.gy==gy)) {
+                towers.push(new Tower(gx, gy)); credits -= 50; updateUI();
+            }
+        }
+
+        function drawSelection() {
+            let gx = floor(mouseX / GRID) * GRID, gy = floor(mouseY / GRID) * GRID;
+            fill(pathCells.includes(`${gx},${gy}`) ? 'rgba(244,63,94,0.2)' : 'rgba(14,165,233,0.2)');
+            rect(gx, gy, GRID, GRID);
+        }
+
+        function updateUI() {
+            document.getElementById('m-val').innerText = credits;
+            document.getElementById('w-val').innerText = wave;
+            document.getElementById('l-val').innerText = lives;
+        }
+
+        function dToSeg(px, py, x1, y1, x2, y2) {
+            let l2 = sq(x1-x2) + sq(y1-y2);
+            if (l2 == 0) return dist(px, py, x1, y1);
+            let t = ((px-x1)*(x2-x1) + (py-y1)*(y2-y1)) / l2;
+            t = max(0, min(1, t));
+            return dist(px, py, x1 + t*(x2-x1), y1 + t*(y2-y1));
+        }
+    </script>
+</body>
+</html>
